@@ -73,13 +73,15 @@ class DatabaseService:
     async def create_poll(
         self,
         title: str,
-        description: str
+        description: str,
+        options: list[str]
     ) -> PollModel:
         async with self.session() as session:
             poll = PollModel(
                 id=str(uuid.uuid4())[:8],
                 title=title,
-                description=description
+                description=description,
+                options=options
             )
             session.add(poll)
             await session.commit()
@@ -92,10 +94,33 @@ class DatabaseService:
                 select(PollModel).filter(PollModel.id == poll_id)
             )
             return result.scalar_one_or_none()
-
+    
     async def get_all_polls(self) -> List[PollModel]:
         async with self.session() as session:
             result = await session.execute(select(PollModel))
+            return result.scalars().all()
+    
+    async def get_unanswered_polls(self, user_id: str) -> List[PollModel]:
+        async with self.session() as session:
+            # Get all polls that don't have an answer from this user
+            # Using a subquery to find polls that user has answered
+            answered_polls = select(answer_table.c.poll_id).where(
+                answer_table.c.user_id == user_id
+            ).scalar_subquery()
+
+            # Select all polls that aren't in the answered_polls subquery
+            result = await session.execute(
+                select(PollModel)
+                .where(PollModel.id.not_in(answered_polls))
+                # Optionally exclude closed polls
+                .where(or_(
+                    PollModel.closed_at.is_(None),
+                    PollModel.closed_at > datetime.utcnow()
+                ))
+                # Order by creation date, newest first
+                .order_by(PollModel.created_at.desc())
+            )
+            
             return result.scalars().all()
 
     async def close_poll(self, poll_id: str) -> Optional[PollModel]:
@@ -119,20 +144,6 @@ class DatabaseService:
         answer: str
     ) -> Dict:
         async with self.session() as session:
-            # Check if poll exists
-            poll_result = await session.execute(
-                select(PollModel).filter(PollModel.id == poll_id)
-            )
-            if not poll_result.scalar_one_or_none():
-                raise ValueError("Poll not found")
-
-            # Check if user exists
-            user_result = await session.execute(
-                select(UserModel).filter(UserModel.id == user_id)
-            )
-            if not user_result.scalar_one_or_none():
-                raise ValueError("User not found")
-
             # Check if user has already answered this poll
             existing_answer = await session.execute(
                 select(answer_table).where(
@@ -167,13 +178,6 @@ class DatabaseService:
 
     async def get_poll_answers(self, poll_id: str) -> List[Dict]:
         async with self.session() as session:
-            # First check if poll exists
-            poll_result = await session.execute(
-                select(PollModel).filter(PollModel.id == poll_id)
-            )
-            if not poll_result.scalar_one_or_none():
-                raise ValueError("Poll not found")
-
             result = await session.execute(
                 select(answer_table).where(answer_table.c.poll_id == poll_id)
             )
@@ -181,13 +185,6 @@ class DatabaseService:
 
     async def get_user_answers(self, user_id: str) -> List[Dict]:
         async with self.session() as session:
-            # First check if user exists
-            user_result = await session.execute(
-                select(UserModel).filter(UserModel.id == user_id)
-            )
-            if not user_result.scalar_one_or_none():
-                raise ValueError("User not found")
-
             result = await session.execute(
                 select(answer_table).where(answer_table.c.user_id == user_id)
             )
