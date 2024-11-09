@@ -1,3 +1,3 @@
 from .basecontroller import *
-from .TradingController import *
+from .MainController import *
 from .AuthController import *

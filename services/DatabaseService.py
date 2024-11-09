@@ -1,9 +1,9 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select, and_, or_, not_, insert
+from sqlalchemy import select, and_, or_, not_
 from contextlib import asynccontextmanager
-from typing import List, Optional, AsyncGenerator, Dict
+from typing import List, Optional, AsyncGenerator
 from datetime import datetime
-from models import Base, UserModel, PollModel, answer_table
+from models import Base, UserModel, PollModel, AnswerModel
 import uuid
 
 class DatabaseService:
@@ -26,8 +26,16 @@ class DatabaseService:
             except:
                 await session.rollback()
                 raise
-    
-    async def find_user_by_fingerprint_or_ip(
+
+    # User-related methods
+    async def get_user(self, user_id: str) -> Optional[UserModel]:
+        async with self.session() as session:
+            result = await session.execute(
+                select(UserModel).filter(UserModel.id == user_id)
+            )
+            return result.scalar_one_or_none()
+
+    async def find_and_update_user(
         self,
         fingerprint_id: Optional[str] = None,
         ipaddress: Optional[str] = None
@@ -36,26 +44,31 @@ class DatabaseService:
             raise ValueError("Either fingerprint_id or ipaddress must be provided")
             
         async with self.session() as session:
-            # Build query conditions
             conditions = []
             if fingerprint_id:
                 conditions.append(UserModel.fingerprintId == fingerprint_id)
             if ipaddress:
                 conditions.append(UserModel.ipaddress == ipaddress)
                 
-            # Use OR to match either condition
             result = await session.execute(
                 select(UserModel).filter(or_(*conditions))
             )
-            return result.scalar_one_or_none()
-    
-    # User-related methods
-    async def get_user(self, user_id: str) -> Optional[UserModel]:
-        async with self.session() as session:
-            result = await session.execute(
-                select(UserModel).filter(UserModel.id == user_id)
-            )
-            return result.scalar_one_or_none()
+            user = result.scalar_one_or_none()
+            
+            if user:
+                update_data = {}
+                if fingerprint_id and user.fingerprintId != fingerprint_id:
+                    update_data['fingerprintId'] = fingerprint_id
+                if ipaddress and user.ipaddress != ipaddress:
+                    update_data['ipaddress'] = ipaddress
+                    
+                if update_data:
+                    for key, value in update_data.items():
+                        setattr(user, key, value)
+                    await session.commit()
+                    await session.refresh(user)
+            
+            return user
 
     async def create_user(self, fingerprint_id: str, ipaddress: str) -> UserModel:
         async with self.session() as session:
@@ -94,30 +107,27 @@ class DatabaseService:
                 select(PollModel).filter(PollModel.id == poll_id)
             )
             return result.scalar_one_or_none()
-    
+
     async def get_all_polls(self) -> List[PollModel]:
         async with self.session() as session:
             result = await session.execute(select(PollModel))
             return result.scalars().all()
-    
+
     async def get_unanswered_polls(self, user_id: str) -> List[PollModel]:
         async with self.session() as session:
+            
             # Get all polls that don't have an answer from this user
-            # Using a subquery to find polls that user has answered
-            answered_polls = select(answer_table.c.poll_id).where(
-                answer_table.c.user_id == user_id
+            answered_polls = select(AnswerModel.poll_id).where(
+                AnswerModel.user_id == user_id
             ).scalar_subquery()
 
-            # Select all polls that aren't in the answered_polls subquery
             result = await session.execute(
                 select(PollModel)
                 .where(PollModel.id.not_in(answered_polls))
-                # Optionally exclude closed polls
                 .where(or_(
                     PollModel.closed_at.is_(None),
                     PollModel.closed_at > datetime.utcnow()
                 ))
-                # Order by creation date, newest first
                 .order_by(PollModel.created_at.desc())
             )
             
@@ -137,72 +147,79 @@ class DatabaseService:
             raise ValueError("Poll not found")
 
     # Answer-related methods
-    async def submit_answer(
+    async def create_answer(
         self,
         user_id: str,
         poll_id: str,
         answer: str
-    ) -> Dict:
+    ) -> AnswerModel:
         async with self.session() as session:
-            # Check if user has already answered this poll
-            existing_answer = await session.execute(
-                select(answer_table).where(
+            # Check if user has already answered
+            existing = await session.execute(
+                select(AnswerModel).filter(
                     and_(
-                        answer_table.c.user_id == user_id,
-                        answer_table.c.poll_id == poll_id
+                        AnswerModel.user_id == user_id,
+                        AnswerModel.poll_id == poll_id
                     )
                 )
             )
-            if existing_answer.first():
+            if existing.scalar_one_or_none():
                 raise ValueError("User has already answered this poll")
 
-            # Insert new answer
-            answer_id = f"answer_{datetime.utcnow().timestamp()}"
-            await session.execute(
-                insert(answer_table).values(
-                    id=answer_id,
-                    user_id=user_id,
-                    poll_id=poll_id,
-                    answer=answer,
-                    created_at=datetime.utcnow()
-                )
+            # Verify user and poll exist
+            user = await session.execute(
+                select(UserModel).filter(UserModel.id == user_id)
             )
+            if not user.scalar_one_or_none():
+                raise ValueError("User not found")
+
+            poll = await session.execute(
+                select(PollModel).filter(PollModel.id == poll_id)
+            )
+            if not poll.scalar_one_or_none():
+                raise ValueError("Poll not found")
+
+            answer_model = AnswerModel(
+                id=f"answer_{datetime.utcnow().timestamp()}",
+                user_id=user_id,
+                poll_id=poll_id,
+                answer=answer
+            )
+            session.add(answer_model)
             await session.commit()
-            
-            return {
-                "id": answer_id,
-                "user_id": user_id,
-                "poll_id": poll_id,
-                "answer": answer
-            }
+            await session.refresh(answer_model)
+            return answer_model
 
-    async def get_poll_answers(self, poll_id: str) -> List[Dict]:
+    async def get_poll_answers(self, poll_id: str) -> List[AnswerModel]:
         async with self.session() as session:
             result = await session.execute(
-                select(answer_table).where(answer_table.c.poll_id == poll_id)
+                select(AnswerModel)
+                .filter(AnswerModel.poll_id == poll_id)
+                .order_by(AnswerModel.created_at.desc())
             )
-            return [dict(row) for row in result.all()]
+            return result.scalars().all()
 
-    async def get_user_answers(self, user_id: str) -> List[Dict]:
+    async def get_user_answers(self, user_id: str) -> List[AnswerModel]:
         async with self.session() as session:
             result = await session.execute(
-                select(answer_table).where(answer_table.c.user_id == user_id)
+                select(AnswerModel)
+                .filter(AnswerModel.user_id == user_id)
+                .order_by(AnswerModel.created_at.desc())
             )
-            return [dict(row) for row in result.all()]
+            return result.scalars().all()
 
     async def get_user_poll_answer(
         self,
         user_id: str,
         poll_id: str
-    ) -> Optional[Dict]:
+    ) -> Optional[AnswerModel]:
         async with self.session() as session:
             result = await session.execute(
-                select(answer_table).where(
+                select(AnswerModel).filter(
                     and_(
-                        answer_table.c.user_id == user_id,
-                        answer_table.c.poll_id == poll_id
+                        AnswerModel.user_id == user_id,
+                        AnswerModel.poll_id == poll_id
                     )
                 )
             )
-            row = result.first()
-            return dict(row) if row else None
+            return result.scalar_one_or_none()

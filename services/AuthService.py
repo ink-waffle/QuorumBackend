@@ -36,7 +36,7 @@ class AuthService:
                     resp = await response.json()
                     fingerprintId = resp["products"]["identification"]["data"]["visitorId"]
                     ipaddress = resp["products"]["identification"]["data"]["ip"]
-                    user = await self.database_service.find_user_by_fingerprint_or_ip(
+                    user = await self.database_service.find_and_update_user(
                         fingerprint_id=fingerprintId,
                         ipaddress=ipaddress
                         )

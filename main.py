@@ -31,11 +31,11 @@ def create_app():
     auth_service: AuthService = AuthService(db_service)
 
     # Initialize controllers
-    # trading_controller: TradingController = TradingController(trading_service, balance_service , auth_service)
+    main_controller: MainController = MainController(db_service , auth_service)
     auth_controller: AuthController = AuthController(auth_service, db_service)
 
     # Register routes
-    # app.include_router(trading_controller.router, prefix="")
+    app.include_router(main_controller.router, prefix="")
     app.include_router(auth_controller.router, prefix="")
 
     @app.on_event("startup")

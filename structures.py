@@ -2,29 +2,19 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional
 
-class TokenModel(BaseModel):
-    access_token: str
-    token_type: str
+class PollCreateRequest(BaseModel):
+    title: str = Field(..., description="Question of Poll")
+    description: str = Field(..., description="Description of Poll")
+    options: list[str] = Field(..., description="Options")
 
-class Credentialsodel(BaseModel):
-    username: str
-    password: str
+class AnswerRequest(BaseModel):
+    answer: str = Field(..., description="Answer Variant in Plain Text")
+    pollId: str = Field(..., description="ID of Poll we answer to")
+    userId: str = Field(..., description="ID of User answering")
 
-class TradeRequest(BaseModel):
-    direction: int = Field(..., description="Trade direction: 'up' or 'down'")
-    amount: float = Field(..., gt=0, description="Trade amount")
-    duration_seconds: int = Field(..., gt=0, le=60, description="Trade duration in seconds")
-    asset_name: str = Field(..., description="Asset index")
-
-class Trade(BaseModel):
+class Answer(BaseModel):
     id: str
-    user_id: str
-    direction: int
-    amount: float
-    entry_time: datetime
-    duration: float
-    result: Optional[str]
-    payout: Optional[float]
-
-class Balance(BaseModel):
-    balance: float
+    userId: str
+    pollId: str
+    answer: str
+    createdAt: datetime
