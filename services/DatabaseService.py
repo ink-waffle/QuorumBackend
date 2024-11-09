@@ -1,10 +1,11 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select, and_, or_, not_
+from sqlalchemy import select, and_, or_, not_, func
 from contextlib import asynccontextmanager
-from typing import List, Optional, AsyncGenerator
+from typing import List, Optional, AsyncGenerator, Dict, Tuple, Literal
 from datetime import datetime
-from models import Base, UserModel, PollModel, AnswerModel
+from models import *
 import uuid
+import random
 
 class DatabaseService:
     def __init__(self, db_url: str):
@@ -207,6 +208,20 @@ class DatabaseService:
                 .order_by(AnswerModel.created_at.desc())
             )
             return result.scalars().all()
+    
+    async def get_user_poll_answer(self, poll_id: str, user_id: str) -> AnswerModel:
+        async with self.session() as session:
+            result = await session.execute(
+                select(AnswerModel)
+                .filter(
+                    and_(
+                        AnswerModel.poll_id == poll_id,
+                        AnswerModel.user_id == user_id,
+                        )
+                    )
+                .order_by(AnswerModel.created_at.desc())
+            )
+            return result.scalar_one_or_none()
 
     async def get_user_poll_answer(
         self,
@@ -223,3 +238,311 @@ class DatabaseService:
                 )
             )
             return result.scalar_one_or_none()
+
+    async def create_comment(
+        self,
+        user_id: str,
+        poll_id: str,
+        poll_answer: str,
+        content: str,
+        thread_id: Optional[str] = None
+    ) -> CommentModel:
+        """
+        Create a new comment. If thread_id is not provided, starts a new thread.
+        If thread_id is provided, adds comment to existing thread.
+        """
+        async with self.session() as session:
+            # If no thread_id provided, create new thread
+            if not thread_id or thread_id == "":
+                thread_id = str(uuid.uuid4())[:8]
+                thread_position = 0
+            else:
+                # Verify thread exists and get next position
+                thread_exists = await session.execute(
+                    select(CommentModel).filter(CommentModel.thread_id == thread_id)
+                )
+                if not thread_exists.scalar_one_or_none():
+                    raise ValueError("Thread not found")
+                
+                # Get the highest position in this thread
+                max_position_result = await session.execute(
+                    select(func.max(CommentModel.thread_position))
+                    .filter(CommentModel.thread_id == thread_id)
+                )
+                max_position = max_position_result.scalar_one_or_none() or -1
+                thread_position = max_position + 1
+
+            comment = CommentModel(
+                id=str(uuid.uuid4())[:8],
+                content=content,
+                user_id=user_id,
+                poll_id=poll_id,
+                poll_answer=poll_answer,
+                thread_id=thread_id,
+                thread_position=thread_position
+            )
+            
+            session.add(comment)
+            await session.commit()
+            await session.refresh(comment)
+            return comment
+
+    async def get_poll_comments(
+        self,
+        poll_id: str,
+        include_threads: bool = True
+    ) -> list[dict[str, List[CommentModel]]]:
+        """
+        Get all comments for a poll.
+        If include_threads is True, returns comments grouped by thread_id.
+        If False, returns flat list of comments.
+        """
+        async with self.session() as session:
+            # Get comments ordered by thread and position
+            query = select(CommentModel).filter(
+                CommentModel.poll_id == poll_id
+            ).order_by(
+                CommentModel.thread_id,
+                CommentModel.thread_position
+            )
+            
+            result = await session.execute(query)
+            comments = result.scalars().all()
+
+            if not include_threads:
+                return comments
+
+            # Group comments by thread
+            threads = {}
+            for comment in comments:
+                if comment.thread_id not in threads:
+                    threads[comment.thread_id] = []
+                threads[comment.thread_id].append(comment)
+            
+            return threads
+
+    async def get_comment_thread(self, thread_id: str) -> List[CommentModel]:
+        """Get all comments in a specific thread, ordered by position."""
+        async with self.session() as session:
+            result = await session.execute(
+                select(CommentModel)
+                .filter(CommentModel.thread_id == thread_id)
+                .order_by(CommentModel.thread_position)
+            )
+            comments = result.scalars().all()
+            
+            if not comments:
+                raise ValueError("Thread not found")
+                
+            return comments
+    
+    async def get_comment_thread(self, thread_id: str) -> List[CommentModel]:
+        """Get all comments in a specific thread, ordered by position."""
+        async with self.session() as session:
+            result = await session.execute(
+                select(CommentModel)
+                .filter(CommentModel.thread_id == thread_id)
+                .order_by(CommentModel.thread_position)
+            )
+            comments = result.scalars().all()
+            
+            if not comments:
+                raise ValueError("Thread not found")
+                
+            return comments
+
+    async def get_random_thread_by_answer(
+        self,
+        poll_id: str,
+        answer: str
+    ) -> Optional[List[CommentModel]]:
+        """
+        Get a random thread from a poll where the parent comment (position 0)
+        was made by a user who answered with the specified answer.
+        
+        Returns the complete thread (all comments) or None if no matching threads found.
+        """
+        async with self.session() as session:
+            # First get all thread_ids where the parent comment has the specified answer
+            parent_comments_query = (
+                select(CommentModel.thread_id)
+                .filter(and_(
+                    CommentModel.poll_id == poll_id,
+                    CommentModel.thread_position == 0,
+                    CommentModel.poll_answer == answer
+                ))
+            )
+            
+            result = await session.execute(parent_comments_query)
+            matching_thread_ids = result.scalars().all()
+            
+            if not matching_thread_ids:
+                return None
+            
+            # Pick a random thread_id
+            random_thread_id = random.choice(matching_thread_ids)
+            
+            # Get all comments in the selected thread
+            thread_comments = await session.execute(
+                select(CommentModel)
+                .filter(CommentModel.thread_id == random_thread_id)
+                .order_by(CommentModel.thread_position)
+            )
+            
+            return thread_comments.scalars().all()
+    
+    async def get_leastreplies_thread_by_answer(
+        self,
+        poll_id: str,
+        answer: str
+    ) -> Optional[List[CommentModel]]:
+        """
+        Get a thread from a poll where:
+        1. Parent comment (position 0) was made by a user who answered with the specified answer
+        2. Thread has the least number of replies
+        3. If multiple threads have same min replies, picks the oldest one
+        
+        Returns the complete thread (all comments) or None if no matching threads found.
+        """
+        async with self.session() as session:
+            # First get all qualifying parent comments with their reply counts
+            thread_counts = (
+                select(
+                    CommentModel.thread_id,
+                    func.count(CommentModel.id).label('reply_count')
+                )
+                .filter(CommentModel.poll_id == poll_id)
+                .group_by(CommentModel.thread_id)
+                .subquery()
+            )
+
+            # Get parent comments that match our criteria
+            parent_query = (
+                select(CommentModel, thread_counts.c.reply_count)
+                .join(
+                    thread_counts,
+                    CommentModel.thread_id == thread_counts.c.thread_id
+                )
+                .filter(and_(
+                    CommentModel.poll_id == poll_id,
+                    CommentModel.thread_position == 0,
+                    CommentModel.poll_answer == answer
+                ))
+                # Order by reply count (ascending) and then creation time (ascending)
+                .order_by(
+                    thread_counts.c.reply_count.asc(),
+                    CommentModel.created_at.asc()
+                )
+            )
+            
+            result = await session.execute(parent_query)
+            first_result = result.first()
+            
+            if not first_result:
+                return None
+            
+            parent_comment = first_result[0]
+            
+            # Get all comments in the selected thread
+            thread_comments = await session.execute(
+                select(CommentModel)
+                .filter(CommentModel.thread_id == parent_comment.thread_id)
+                .order_by(CommentModel.thread_position)
+            )
+            
+            return thread_comments.scalars().all()
+    
+    
+    async def get_user_comments(
+        self,
+        user_id: str
+    ) -> List[CommentModel]:
+        """Get all comments by a specific user."""
+        async with self.session() as session:
+            result = await session.execute(
+                select(CommentModel)
+                .filter(CommentModel.user_id == user_id)
+                .order_by(CommentModel.created_at.desc())
+            )
+            return result.scalars().all()
+    
+        
+    async def vote_comment(
+        self,
+        user_id: str,
+        comment_id: str,
+        vote_type: Literal[1, -1]  # 1 for upvote, -1 for downvote
+    ) -> CommentModel:
+        async with self.session() as session:
+            
+            user = await session.execute(
+                select(UserModel).filter(UserModel.id == user_id)
+            ).scalar_one_or_none()
+            comment = await session.execute(
+                select(CommentModel).filter(CommentModel.id == comment_id)
+            ).scalar_one_or_none()
+            
+            # Check if user already voted
+            existing_vote = await session.execute(
+                select(VoteModel).filter(
+                    and_(
+                        VoteModel.user_id == user_id,
+                        VoteModel.comment_id == comment_id
+                    )
+                )
+            )
+            existing_vote = existing_vote.scalar_one_or_none()
+
+            if existing_vote:
+                return comment
+
+            else:
+                # New vote
+                new_vote = VoteModel(
+                    id=str(uuid.uuid4())[:8],
+                    user_id=user_id,
+                    comment_id=comment_id,
+                    vote_type=vote_type
+                )
+                session.add(new_vote)
+                if vote_type == 1:
+                    comment.upvotes += 1
+                else:
+                    comment.downvotes += 1
+                await session.commit()
+                return comment
+    async def get_user_vote(
+        self,
+        user_id: str,
+        comment_id: str
+    ) -> Optional[int]:
+        """Get user's vote on a comment. Returns 1, -1, or None."""
+        async with self.session() as session:
+            result = await session.execute(
+                select(VoteModel).filter(
+                    and_(
+                        VoteModel.user_id == user_id,
+                        VoteModel.comment_id == comment_id
+                    )
+                )
+            )
+            vote = result.scalar_one_or_none()
+            return vote.vote_type if vote else 0
+
+
+    async def get_comment_votes(
+        self,
+        comment_id: str
+    ) -> Dict[str, int]:
+        """Get vote counts for a comment."""
+        async with self.session() as session:
+            comment_result = await session.execute(
+                select(CommentModel).filter(CommentModel.id == comment_id)
+            )
+            comment = comment_result.scalar_one_or_none()
+            
+            return {
+                "upvotes": comment.upvotes,
+                "downvotes": comment.downvotes,
+                "score": comment.upvotes - comment.downvotes
+            }
