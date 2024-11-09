@@ -6,12 +6,18 @@ from datetime import datetime
 from models import *
 import uuid
 import random
+from fastapi import HTTPException, status
 
 class DatabaseService:
     def __init__(self, db_url: str):
         self.engine = create_async_engine(db_url)
         self.AsyncSessionLocal = async_sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
+        )
+        self.unallowed_Exception = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     async def create_database_tables(self):
@@ -182,17 +188,17 @@ class DatabaseService:
                 raise ValueError("User has already answered this poll")
 
             # Verify user and poll exist
-            user = await session.execute(
+            user = (await session.execute(
                 select(UserModel).filter(UserModel.id == user_id)
-            )
+            )).scalar_one_or_none()
 
-            poll = await session.execute(
+            poll = (await session.execute(
                 select(PollModel).filter(PollModel.id == poll_id)
-            )
+            )).scalar_one_or_none()
             
             # Check if user can answer this poll
             if poll.requireVerification and (not user.strongfingerprintId or user.strongfingerprintId == ""):
-                raise ValueError("This poll requires verified users only")
+                return self.unallowed_Exception
 
             answer_model = AnswerModel(
                 id=f"answer_{datetime.utcnow().timestamp()}",
