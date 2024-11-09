@@ -19,8 +19,18 @@ class AuthController(BaseController):
             methods=["GET"],
             # response_model=TokenResponse
         )
+        self.router.add_api_route(
+            "/auth/markUserStrong",
+            self.markUserStrong,
+            methods=["GET"],
+            response_model=bool
+        )
 
     async def getUserIdWeak(self, requestId: str):
         # Get user from database
         resp = await self.auth.get_userIdWeak(requestId=requestId)
+        return resp
+    async def markUserStrong(self, userId: str):
+        # Get user from database
+        resp = await self.auth.markUserStrong(userId=userId)
         return resp

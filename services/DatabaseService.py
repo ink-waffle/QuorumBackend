@@ -36,6 +36,16 @@ class DatabaseService:
             )
             return result.scalar_one_or_none()
 
+    async def mark_user_strong(self, user_id: str):
+        async with self.session() as session:
+            result = await session.execute(
+                select(UserModel).filter(UserModel.id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            user.strongfingerprintId = "ldskfhlkan29739akjs92"
+            await session.commit()
+            await session.refresh(user)
+            return True
     async def find_and_update_user(
         self,
         fingerprint_id: Optional[str] = None,
@@ -88,14 +98,18 @@ class DatabaseService:
         self,
         title: str,
         description: str,
-        options: list[str]
+        options: list[str],
+        require_verification: bool = False,
+        is_actionable: bool = False
     ) -> PollModel:
         async with self.session() as session:
             poll = PollModel(
                 id=str(uuid.uuid4())[:8],
                 title=title,
                 description=description,
-                options=options
+                options=options,
+                requireVerification=require_verification,
+                isActionable=is_actionable
             )
             session.add(poll)
             await session.commit()
@@ -171,14 +185,14 @@ class DatabaseService:
             user = await session.execute(
                 select(UserModel).filter(UserModel.id == user_id)
             )
-            if not user.scalar_one_or_none():
-                raise ValueError("User not found")
 
             poll = await session.execute(
                 select(PollModel).filter(PollModel.id == poll_id)
             )
-            if not poll.scalar_one_or_none():
-                raise ValueError("Poll not found")
+            
+            # Check if user can answer this poll
+            if poll.requireVerification and (not user.strongfingerprintId or user.strongfingerprintId == ""):
+                raise ValueError("This poll requires verified users only")
 
             answer_model = AnswerModel(
                 id=f"answer_{datetime.utcnow().timestamp()}",

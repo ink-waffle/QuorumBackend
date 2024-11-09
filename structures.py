@@ -6,6 +6,8 @@ class PollCreateRequest(BaseModel):
     title: str = Field(..., description="Question of Poll")
     description: str = Field(..., description="Description of Poll")
     options: list[str] = Field(..., description="Options")
+    requireVerification: bool = Field(default=False, description="Whether to require verified users")
+    isActionable: bool = Field(default=False, description="Does the poll have an actual effect")
 
 class CommentCreateRequest(BaseModel):
     content: str = Field(..., description="Content of the comment")
@@ -35,6 +37,8 @@ class Poll(BaseModel):
     title: str = Field(..., description="Question of Poll")
     description: str = Field(..., description="Description of Poll")
     options: list[str] = Field(..., description="Options")
+    requireVerification: bool = Field(..., description="Whether verified users are required")
+    isActionable: bool = Field(..., description="Whether this poll affects something")
     answers: list[Answer] = Field(..., description="answers")
     comments: Dict[str, List[Comment]] = Field(default={}, description="Comments grouped by thread_id")
 

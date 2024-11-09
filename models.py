@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, relationship
-from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, Integer, UniqueConstraint
+from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, Integer, UniqueConstraint, Boolean
 from datetime import datetime
 from typing import Optional, List
 
@@ -27,6 +27,8 @@ class PollModel(Base):
     title = Column(String, nullable=False)
     description = Column(String)
     options = Column(JSON)
+    requireVerification = Column(Boolean, default=False, nullable=False)
+    isActionable = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     closed_at = Column(DateTime, nullable=True)
     

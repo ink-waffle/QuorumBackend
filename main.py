@@ -14,7 +14,7 @@ from controllers import *
 import uvicorn
 
 def create_app():
-    app = FastAPI(title="Binary Trading Platform")
+    app = FastAPI(title="Quorum Back Local")
     
     app.add_middleware(
         CORSMiddleware,

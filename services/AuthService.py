@@ -48,3 +48,9 @@ class AuthService:
                     return user.id
                 except Exception as e:
                     print(traceback.format_exc())
+    
+    async def markUserStrong(
+        self,
+        userId: str
+    ) -> bool:
+        return await self.database_service.mark_user_strong(user_id=userId)

@@ -137,7 +137,9 @@ class MainController(BaseController):
                 description=poll.description,
                 options=poll.options,
                 answers=answersResponse,
-                comments={}
+                comments={},
+                requireVerification=poll.requireVerification,
+                isActionable=poll.isActionable
             ))
         return pollResponse
     
@@ -154,7 +156,7 @@ class MainController(BaseController):
                 userId=answer.user_id,
                 pollId=answer.poll_id,
                 answer=answer.answer,
-                createdAt=answer.created_at
+                createdAt=answer.created_at,
             ))
         
         # commentResponse: list[Comment] = list()
@@ -172,7 +174,9 @@ class MainController(BaseController):
             description=poll.description,
             options=poll.options,
             answers=answersResponse,
-            comments={}
+            comments={},
+            requireVerification=poll.requireVerification,
+            isActionable=poll.isActionable
         )
     
     async def createPoll(
@@ -182,7 +186,9 @@ class MainController(BaseController):
         poll = await self.database_service.create_poll(
             title=pollCreateReq.title,
             description=pollCreateReq.description,
-            options=pollCreateReq.options
+            options=pollCreateReq.options,
+            require_verification=pollCreateReq.requireVerification,
+            is_actionable=pollCreateReq.isActionable
         )
         
         answersResponse: list[Answer] = list()
@@ -192,7 +198,7 @@ class MainController(BaseController):
                 userId=answer.user_id,
                 pollId=answer.poll_id,
                 answer=answer.answer,
-                createdAt=answer.created_at
+                createdAt=answer.created_at,
             ))
         return Poll(
             id=poll.id,
@@ -200,7 +206,9 @@ class MainController(BaseController):
             description=poll.description,
             options=poll.options,
             answers=answersResponse,
-            comments={}
+            comments={},
+            requireVerification=pollCreateReq.requireVerification,
+            isActionable=pollCreateReq.isActionable
         )
     
     async def getUserComments(
