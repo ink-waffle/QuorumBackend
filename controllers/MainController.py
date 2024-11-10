@@ -304,7 +304,7 @@ class MainController(BaseController):
             )
         
         commentResponse = list()
-        for comment in thread.comments:
+        for comment in thread:
             commentResponse.append(Comment(
                 id=comment.id,
                 content=comment.content,
