@@ -69,8 +69,10 @@ class DatabaseService:
                 
             result = await session.execute(
                 select(UserModel).filter(or_(*conditions))
+                .order_by(UserModel.created_at.desc())  # Get the most recent one
+                .limit(1)  # Only get one result
             )
-            user = result.unique().scalar_one_or_none()
+            user = result.scalar_one_or_none()
             
             if user:
                 update_data = {}
